@@ -217,8 +217,18 @@ async def run_all(params: RunAllIn) -> dict[str, Any]:
 
 
 def main() -> None:
-    """Entry point: run the server over stdio."""
-    mcp.run()
+    """Entry point.
+
+    Transport is selectable via HF_SOCIAL_TRANSPORT (default "stdio"):
+      * "stdio"           -- for local clients / the Claude Agent SDK
+      * "streamable-http" -- expose over HTTP so the Anthropic Messages API MCP
+                             connector (which needs a URL) can reach it
+      * "sse"             -- legacy SSE transport
+    """
+    import os
+
+    transport = os.environ.get("HF_SOCIAL_TRANSPORT", "stdio")
+    mcp.run(transport=transport)  # type: ignore[arg-type]
 
 
 if __name__ == "__main__":

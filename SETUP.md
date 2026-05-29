@@ -21,15 +21,25 @@ export HF_API_KEY="..."
 export HF_API_SECRET="..."
 ```
 
-Optional model overrides (defaults shown):
+**Application endpoints (must match your Higgsfield account).** The SDK calls an
+*application* endpoint on `https://platform.higgsfield.ai` with a JSON argument
+payload. The endpoint paths and their exact argument schema are account/app
+specific — set them to the real values from your Higgsfield app:
 
 ```bash
-export HF_IMAGE_MODEL="seedream"
-export HF_VIDEO_MODEL="higgsfield-ai/standard"   # DoP / standard motion
+export HF_IMAGE_MODEL="seedream"                  # image application endpoint
+export HF_VIDEO_MODEL="higgsfield-ai/standard"    # video application endpoint (DoP / standard)
 ```
 
+If your application expects different argument keys than the defaults
+(`prompt`, `aspect_ratio`, `resolution`, `reference_image`/`mode` for image;
+`input_image`, `prompt`, `aspect_ratio` for video), adjust the mapping in
+`higgsfield_social/higgsfield_client.py` (`_image_arguments` / `_video_arguments`)
+— that is the single, documented place for it.
+
 If credentials are missing, generation tools return a clear, actionable error —
-**no silent fake success.**
+**no silent fake success.** (Verified: with the SDK installed but no keys, a
+cycle fails gracefully at the image step with that error.)
 
 ## 2. Platform access
 
@@ -99,7 +109,18 @@ Example crontab (every 6 hours):
 0 */6 * * * cd /path/to/repo && . .venv/bin/activate && python agent_runner.py >> runner.log 2>&1
 ```
 
-If you run the MCP server over HTTP instead of stdio, set `HF_SOCIAL_MCP_URL`.
+**Important — how the agent reaches the server.** The Anthropic *Messages API*
+MCP connector reaches MCP servers by **URL**, not stdio. Two options:
+
+1. **Hosted/HTTP:** run the server over HTTP and point the runner at it:
+   ```bash
+   HF_SOCIAL_TRANSPORT=streamable-http python -m higgsfield_social.server
+   export HF_SOCIAL_MCP_URL="https://your-host/mcp"
+   ```
+2. **Local stdio:** drive it with the **Claude Agent SDK** / Claude Code, which
+   can spawn `python -m higgsfield_social.server` directly over stdio.
+
+`python agent_runner.py --print-only` shows exactly which descriptor it will send.
 
 ## 5. AI labeling — keep disclosure on
 
