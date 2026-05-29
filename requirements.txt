@@ -1,0 +1,8 @@
+# AI-Influencer-Automation MCP server
+# Python 3.11+ (developed/tested on 3.11; 3.12 supported)
+
+mcp>=1.2.0
+pydantic>=2
+httpx>=0.27
+higgsfield-client>=0.1   # media generation SDK (lazy-imported; only needed for real generation)
+anthropic>=0.40          # only needed by the agent runner (orchestration)
