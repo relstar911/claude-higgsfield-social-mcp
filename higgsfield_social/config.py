@@ -8,7 +8,10 @@ from __future__ import annotations
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from .publishing import SUPPORTED_PLATFORMS
+from .zernio import PLATFORM_ALIASES, SUPPORTED_PLATFORMS
+
+# Names accepted in a config: Zernio's full list plus our aliases (e.g. "x").
+ALLOWED_PLATFORMS = tuple(SUPPORTED_PLATFORMS) + tuple(PLATFORM_ALIASES)
 
 
 class FormatRules(BaseModel):
@@ -61,7 +64,15 @@ class PersonaConfig(BaseModel):
 
     format_rules: FormatRules = Field(default_factory=FormatRules)
     platforms: list[str] = Field(
-        ..., min_length=1, description="Target platforms: instagram, tiktok, x."
+        ...,
+        min_length=1,
+        description="Target platforms (Zernio names, e.g. instagram, tiktok, "
+        "twitter, linkedin, youtube; 'x' is accepted as an alias for twitter).",
+    )
+    zernio_profile_id: str | None = Field(
+        None,
+        description="Per-persona Zernio profile id (its connected accounts). "
+        "Falls back to the ZERNIO_PROFILE_ID env var when unset.",
     )
     ai_disclosure: bool = Field(
         True, description="Send AI-generated disclosure where supported. Keep true."
@@ -78,9 +89,11 @@ class PersonaConfig(BaseModel):
     @field_validator("platforms")
     @classmethod
     def _validate_platforms(cls, value: list[str]) -> list[str]:
-        unknown = [p for p in value if p not in SUPPORTED_PLATFORMS]
+        # Validate against Zernio's superset (the native provider only reaches
+        # instagram/tiktok/x; that subset is enforced at publish time).
+        unknown = [p for p in value if p not in ALLOWED_PLATFORMS]
         if unknown:
             raise ValueError(
-                f"Unsupported platform(s) {unknown}; supported: {list(SUPPORTED_PLATFORMS)}"
+                f"Unsupported platform(s) {unknown}; supported: {list(ALLOWED_PLATFORMS)}"
             )
         return value

@@ -75,10 +75,11 @@ class CaptionBriefIn(_Base):
 class PublishIn(_Base):
     asset_id: str = Field(..., description="Asset id (image or video) to publish.")
     caption: str = Field(..., description="Final caption text.")
-    platforms: list[str] = Field(..., min_length=1, description="Platforms: instagram, tiktok, x.")
+    platforms: list[str] = Field(..., min_length=1, description="Target platforms (Zernio names; 'x' aliases twitter).")
     ai_disclosure: bool = Field(True, description="Forward AI-generated disclosure where supported.")
     dry_run: bool = Field(False, description="True = validate + record intent, never post.")
     persona_id: str | None = Field(None, description="Owning persona id (inferred from asset if omitted).")
+    profile_id: str | None = Field(None, description="Per-persona Zernio profile id (falls back to ZERNIO_PROFILE_ID env).")
 
 
 class PostLogIn(_Base):

@@ -43,48 +43,67 @@ cycle fails gracefully at the image step with that error.)
 
 ## 2. Platform access
 
-Each platform is isolated in `publish`: a failure on one never blocks the others.
-Missing credentials produce an actionable error; `dry_run=true` needs none.
+Choose a publishing provider with `PUBLISH_PROVIDER` (default `zernio`). Each
+platform is isolated in `publish`: a failure on one never blocks the others.
+`dry_run=true` needs no platform credentials.
 
-### Instagram (Graph API)
+### Option A — Zernio (default, recommended)
 
-Requires a **Business/Creator** account and a token with
-`instagram_content_publish`.
+One unified API for up to 15 platforms; you connect your accounts once in
+Zernio and post via a single call.
 
 ```bash
+export PUBLISH_PROVIDER="zernio"          # default; can be omitted
+export ZERNIO_API_KEY="sk_..."            # Bearer key from your Zernio account
+export ZERNIO_PROFILE_ID="<profile id>"   # global fallback if a persona has none
+```
+
+- **Per-persona accounts:** set `zernio_profile_id` in each `PersonaConfig` so
+  every AI influencer posts to *its own* connected accounts. If unset, the
+  `ZERNIO_PROFILE_ID` env var is used.
+- **Platform names** are Zernio's: `instagram`, `tiktok`, `twitter`, `facebook`,
+  `linkedin`, `youtube`, `pinterest`, `reddit`, `bluesky`, `threads`,
+  `googlebusiness`, `telegram`, `snapchat`, `whatsapp`, `discord`. `'x'` is
+  accepted and normalised to `twitter`.
+- **Media:** Higgsfield's public output URL is passed straight into the post —
+  no upload step. The URL must stay publicly reachable until Zernio fetches it.
+- **Reconciling the request body:** public docs vary slightly on the exact
+  `platforms[]` field shape. It is built in one place,
+  `higgsfield_social/zernio.py:build_post_body`. After your first live call,
+  if a field name differs, adjust it there only. Verify a post via
+  `GET https://zernio.com/api/v1/posts/{postId}`.
+
+Still account-level work you must do: connect each platform inside Zernio and
+pass any platform approvals those platforms require (e.g. Instagram needs a
+Business/Creator account; TikTok needs its Content Posting audit for public
+posts).
+
+### Option B — Native adapters (fallback)
+
+`PUBLISH_PROVIDER=native` uses the built-in per-platform adapters; reaches
+`instagram` / `tiktok` / `x` only.
+
+```bash
+export PUBLISH_PROVIDER="native"
+
+# Instagram (Graph API) — Business/Creator account + instagram_content_publish
 export IG_USER_ID="<ig business account id>"
 export IG_ACCESS_TOKEN="<long-lived token>"
-export IG_GRAPH_VERSION="v21.0"     # optional
-```
+export IG_GRAPH_VERSION="v21.0"                 # optional
 
-Reels are videos: the adapter creates the container, polls until `FINISHED`, then
-publishes.
-
-### TikTok (Content Posting API) — video only
-
-Requires an app that **passed the Content Posting audit**. Before the audit,
-posts are forced to `SELF_ONLY`.
-
-```bash
+# TikTok (Content Posting API) — video only; SELF_ONLY until your audit passes
 export TIKTOK_ACCESS_TOKEN="<access token>"
-export TIKTOK_PRIVACY_LEVEL="SELF_ONLY"   # keep until your audit passes
-```
+export TIKTOK_PRIVACY_LEVEL="SELF_ONLY"
 
-Videos are pulled via `PULL_FROM_URL`, so the asset URL must be publicly
-reachable by TikTok.
-
-### X (Twitter) — OAuth 1.0a user context
-
-Media must be uploaded **before** the tweet (v1.1 `media/upload`, chunked for
-video) to obtain a `media_id`. This is fully implemented (`publishing.py` +
-`oauth1.py`); it just needs real credentials:
-
-```bash
+# X (Twitter) — OAuth 1.0a user context; media uploaded before the tweet
 export X_API_KEY="<consumer key>"
 export X_API_SECRET="<consumer secret>"
 export X_ACCESS_TOKEN="<access token>"
 export X_ACCESS_TOKEN_SECRET="<access token secret>"
 ```
+
+Instagram Reels and TikTok pull media via a public URL (`PULL_FROM_URL`), so the
+asset URL must be publicly reachable; the X adapter downloads + chunk-uploads it.
 
 ## 3. Anthropic key — so Claude orchestrates and writes captions
 

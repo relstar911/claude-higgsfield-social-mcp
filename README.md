@@ -53,6 +53,26 @@ Every tool uses a Pydantic input model (`extra="forbid"`, field descriptions /
 constraints), a full docstring with the return schema, and MCP annotations
 (`readOnlyHint` / `destructiveHint` / `idempotentHint` / `openWorldHint`).
 
+## Publishing provider
+
+`publish` has two selectable backends, chosen via `PUBLISH_PROVIDER`:
+
+- **`zernio`** (default) — one unified call to [Zernio](https://zernio.com)
+  fans out to up to 15 platforms (instagram, tiktok, twitter, facebook,
+  linkedin, youtube, threads, pinterest, reddit, bluesky, telegram, …). Zernio
+  returns a per-platform result, so the "one platform failing never blocks the
+  others" property is preserved. Higgsfield's public media URL is passed
+  straight through — no upload step. `'x'` is accepted as an alias for
+  `twitter`. Each persona posts to its own connected accounts via
+  `zernio_profile_id` (falls back to the `ZERNIO_PROFILE_ID` env var).
+- **`native`** — the hand-built per-platform adapters (Instagram Graph API,
+  TikTok Content Posting, X v1.1 chunked upload + OAuth 1.0a). Kept as a
+  fallback; reaches `instagram` / `tiktok` / `x` only.
+
+The Zernio request body is built in one documented place
+(`higgsfield_social/zernio.py:build_post_body`) — the single spot to reconcile
+with the live API if a field name differs. See [SETUP.md](SETUP.md).
+
 ## Project layout
 
 ```
@@ -63,8 +83,9 @@ higgsfield_social/
   personas.py           create_persona / get_persona
   media.py              generate_image / generate_video / check_job + prompt build
   captions.py           caption_brief + deterministic template fallback
-  publishing.py         publish + Instagram / TikTok / X adapters
-  oauth1.py             OAuth 1.0a signer (X media upload)
+  publishing.py         publish + provider switch + native IG/TikTok/X adapters
+  zernio.py             Zernio unified-publishing provider (default) + seam
+  oauth1.py             OAuth 1.0a signer (native X media upload)
   config.py             PersonaConfig (the niche-as-config schema)
   planner.py            scene rotation + hook building
   cycle.py              _do_cycle, save_persona_config, run_cycle, run_all

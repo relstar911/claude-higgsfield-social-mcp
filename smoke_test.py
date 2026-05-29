@@ -174,6 +174,75 @@ async def _run() -> None:
         used.insert(0, s)
     check(sorted(walk) == pool, f"planner covers the full pool: {walk}")
 
+    print("\n== Zernio provider: live-mapping (mocked seam, posts nothing real) ==")
+    import os
+
+    from higgsfield_social import zernio
+
+    # Fake the ONLY network seam: echo a per-platform success response.
+    async def _fake_submit(body):
+        return {
+            "id": "zpost_smoke_1",
+            "results": [{"name": p["name"], "status": "submitted"} for p in body["platforms"]],
+        }
+
+    zernio.submit_post = _fake_submit  # type: ignore[assignment]
+    os.environ["PUBLISH_PROVIDER"] = "zernio"
+
+    check(zernio.normalize_platform("x") == "twitter", "platform alias x -> twitter")
+
+    # Full Zernio platform list is accepted by the config validator.
+    broad = PersonaConfig(
+        name="Broad", look="l", bio="b", niche="n", style_keywords=["k"],
+        scene_pool=["sc"], hook_patterns=["{topic}"],
+        platforms=["linkedin", "youtube", "threads", "bluesky", "reddit"],
+        autonomous=False, dry_run=True, format_rules={"make_video": False},
+    )
+    check(
+        broad.platforms == ["linkedin", "youtube", "threads", "bluesky", "reddit"],
+        "full Zernio platform list accepted by config",
+    )
+
+    # Real publish path (mocked): per-persona profile id, x normalises to twitter.
+    zlive = PersonaConfig(
+        name="Zee Live", look="l", bio="b", niche="n", style_keywords=["k"],
+        scene_pool=["sc"], hook_patterns=["{topic}"],
+        platforms=["x", "instagram"],
+        zernio_profile_id="prof_zee",
+        autonomous=True, dry_run=False, format_rules={"make_video": False},
+    )
+    cycle.save_persona_config(config=zlive)
+    zres = await cycle.run_cycle(persona_id="zee_live")
+    zc = zres["cycle"]
+    check(zc["status"] == "published", "zernio cycle published (mocked)")
+    zpost = get_store().get("posts", zc["post_id"])
+    check(zpost["provider"] == "zernio" and not zpost["dry_run"], "post recorded as live zernio post")
+    check(zpost["post_id"] == "zpost_smoke_1", "zernio post id captured")
+    zr = zpost["results"]
+    check("twitter" in zr and "instagram" in zr, f"results keyed by canonical names: {list(zr)}")
+    check(all(r.get("ok") for r in zr.values()), "all platforms ok (mocked)")
+
+    print("\n== Zernio: missing profile id -> actionable per-platform error ==")
+    os.environ.pop("ZERNIO_PROFILE_ID", None)
+    znop = PersonaConfig(
+        name="No Profile", look="l", bio="b", niche="n", style_keywords=["k"],
+        scene_pool=["sc"], hook_patterns=["{topic}"],
+        platforms=["instagram"],
+        autonomous=True, dry_run=False, format_rules={"make_video": False},
+    )
+    cycle.save_persona_config(config=znop)
+    nres = await cycle.run_cycle(persona_id="no_profile")
+    npost = get_store().get("posts", nres["cycle"]["post_id"])
+    nr = npost["results"]
+    check(not any(r.get("ok") for r in nr.values()), "no platform ok without a profile id")
+    check(
+        any("profile" in (str(r.get("error", "")) + str(r.get("hint", ""))).lower() for r in nr.values()),
+        "actionable profile-id error surfaced",
+    )
+
+    # Restore default provider for any later use.
+    os.environ.pop("PUBLISH_PROVIDER", None)
+
 
 def mcp_store_cycles():
     from higgsfield_social.state import get_store

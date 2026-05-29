@@ -191,6 +191,7 @@ async def _do_cycle(
         ai_disclosure=config.ai_disclosure,
         dry_run=config.dry_run,
         persona_id=persona_id,
+        profile_id=config.zernio_profile_id,
         store=store,
     )
     if not step("publish", pub):

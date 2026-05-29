@@ -1,11 +1,15 @@
-"""Publishing: one tool, several platform adapters.
+"""Publishing: one tool, two selectable providers.
 
-Each platform is isolated -- a failure on one never blocks the others. Every
-adapter reads its own credentials from the environment and raises an actionable
-:class:`ToolError` when something is missing (no silent fake success). The
-``dry_run`` path validates and records intent without contacting any platform.
+Provider is chosen via ``PUBLISH_PROVIDER`` (default ``"zernio"``):
 
-Supported platforms: ``instagram``, ``tiktok``, ``x``.
+  * ``zernio`` -- one unified call fans out to many platforms (see
+    :mod:`higgsfield_social.zernio`). Higgsfield's public URL is passed straight
+    through; per-platform results come back from Zernio.
+  * ``native`` -- the hand-built per-platform adapters below (Instagram Graph
+    API, TikTok Content Posting, X v1.1 upload + OAuth 1.0a). Kept as a fallback.
+
+Either way each platform is isolated -- one failing never blocks the others --
+and the ``dry_run`` path validates/records intent without contacting anything.
 
 AI disclosure (``ai_disclosure``) is forwarded where the platform supports it
 and is otherwise expected to be present in the caption text (Meta/TikTok require
@@ -20,11 +24,27 @@ from typing import Any
 
 import httpx
 
-from . import oauth1
+from . import oauth1, zernio
 from .helpers import ToolError, fail, fail_from, new_id, now_iso, ok
 from .state import StateStore, get_store
 
-SUPPORTED_PLATFORMS = ("instagram", "tiktok", "x")
+# Platforms the native (per-adapter) provider can reach.
+NATIVE_PLATFORMS = ("instagram", "tiktok", "x")
+# Backwards-compatible alias (older imports).
+SUPPORTED_PLATFORMS = NATIVE_PLATFORMS
+
+
+def _provider() -> str:
+    """Selected publishing provider (default: zernio)."""
+    return os.environ.get("PUBLISH_PROVIDER", "zernio").lower()
+
+
+def supported_platforms(provider: str | None = None) -> tuple[str, ...]:
+    """Platforms allowed for the given (or current) provider."""
+    provider = provider or _provider()
+    if provider == "native":
+        return NATIVE_PLATFORMS
+    return zernio.SUPPORTED_PLATFORMS
 
 GRAPH_VERSION = os.environ.get("IG_GRAPH_VERSION", "v21.0")
 GRAPH_BASE = f"https://graph.facebook.com/{GRAPH_VERSION}"
@@ -348,6 +368,49 @@ _ADAPTERS = {
 }
 
 
+async def _publish_native(
+    asset: dict[str, Any], caption: str, platforms: list[str], ai_disclosure: bool
+) -> dict[str, Any]:
+    """Native provider: one isolated call per platform."""
+    results: dict[str, Any] = {}
+    async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT) as client:
+        for platform in platforms:
+            try:
+                results[platform] = await _ADAPTERS[platform](
+                    client, asset, caption, ai_disclosure
+                )
+            except Exception as exc:  # noqa: BLE001 - isolate per platform
+                results[platform] = fail_from(exc, context=f"publish:{platform}")
+    return results
+
+
+def _dry_run_results(
+    provider: str,
+    asset: dict[str, Any],
+    asset_id: str,
+    caption: str,
+    platforms: list[str],
+    ai_disclosure: bool,
+    profile_id: str | None,
+) -> dict[str, Any]:
+    """Offline echo of the intended request (no network), per platform."""
+    would_post = {
+        "asset_id": asset_id,
+        "type": asset.get("type"),
+        "url": asset.get("url"),
+        "caption": caption,
+        "ai_disclosure": ai_disclosure,
+        "provider": provider,
+    }
+    if provider == "zernio":
+        would_post["zernio_platforms"] = [zernio.normalize_platform(p) for p in platforms]
+        would_post["zernio_profile_id"] = profile_id or os.environ.get("ZERNIO_PROFILE_ID")
+    return {
+        p: {"ok": True, "dry_run": True, "platform": p, "would_post": would_post}
+        for p in platforms
+    }
+
+
 async def publish(
     *,
     asset_id: str,
@@ -356,15 +419,22 @@ async def publish(
     ai_disclosure: bool = True,
     dry_run: bool = False,
     persona_id: str | None = None,
+    profile_id: str | None = None,
     store: StateStore | None = None,
 ) -> dict[str, Any]:
-    """Publish an asset to multiple platforms, each isolated.
+    """Publish an asset to multiple platforms via the selected provider.
 
-    With ``dry_run=True`` nothing is sent; the intended request is validated and
-    recorded. Returns ``{ok, post}`` where ``post.results`` has a per-platform
-    entry (``ok`` true/false).
+    Provider comes from ``PUBLISH_PROVIDER`` (default ``zernio``). Each platform
+    is isolated: one failing never blocks the others. With ``dry_run=True``
+    nothing is sent; the intended request is validated and recorded.
+    ``profile_id`` is the per-persona Zernio profile (falls back to env).
+
+    Returns ``{ok, post, any_published}`` where ``post.results`` has a
+    per-platform entry (``ok`` true/false).
     """
     store = store or get_store()
+    provider = _provider()
+
     asset = store.get("assets", asset_id)
     if not asset:
         return fail(
@@ -373,11 +443,12 @@ async def publish(
         )
     persona_id = persona_id or asset.get("persona_id")
 
-    unknown = [p for p in platforms if p not in _ADAPTERS]
+    allowed = supported_platforms(provider)
+    unknown = [p for p in platforms if zernio.normalize_platform(p) not in allowed]
     if unknown:
         return fail(
-            f"Unknown platform(s): {unknown}.",
-            f"Supported: {list(_ADAPTERS)}.",
+            f"Unknown platform(s) for provider '{provider}': {unknown}.",
+            f"Supported: {list(allowed)}.",
         )
     if not asset.get("url") and not dry_run:
         return fail(
@@ -385,29 +456,22 @@ async def publish(
             "Wait for generation to finish (check_job) before publishing.",
         )
 
-    results: dict[str, Any] = {}
-    async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT) as client:
-        for platform in platforms:
-            if dry_run:
-                results[platform] = {
-                    "ok": True,
-                    "dry_run": True,
-                    "platform": platform,
-                    "would_post": {
-                        "asset_id": asset_id,
-                        "type": asset.get("type"),
-                        "url": asset.get("url"),
-                        "caption": caption,
-                        "ai_disclosure": ai_disclosure,
-                    },
-                }
-                continue
-            try:
-                results[platform] = await _ADAPTERS[platform](
-                    client, asset, caption, ai_disclosure
-                )
-            except Exception as exc:  # noqa: BLE001 - isolate per platform
-                results[platform] = fail_from(exc, context=f"publish:{platform}")
+    post_meta: dict[str, Any] = {"provider": provider}
+    if dry_run:
+        results = _dry_run_results(
+            provider, asset, asset_id, caption, platforms, ai_disclosure, profile_id
+        )
+    elif provider == "native":
+        results = await _publish_native(asset, caption, platforms, ai_disclosure)
+    else:  # zernio
+        results, zmeta = await zernio.publish_via_zernio(
+            asset=asset,
+            caption=caption,
+            platforms=platforms,
+            ai_disclosure=ai_disclosure,
+            profile_id=profile_id,
+        )
+        post_meta.update(zmeta)
 
     any_ok = any(r.get("ok") for r in results.values())
     post = {
@@ -418,6 +482,8 @@ async def publish(
         "platforms": platforms,
         "ai_disclosure": ai_disclosure,
         "dry_run": dry_run,
+        "provider": provider,
+        "post_id": post_meta.get("post_id"),
         "results": results,
         "created_at": now_iso(),
     }
