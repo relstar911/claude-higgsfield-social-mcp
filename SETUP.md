@@ -11,6 +11,15 @@ pip install -r requirements.txt
 python smoke_test.py     # must be green before adding real credentials
 ```
 
+**Configuration:** copy the committed placeholder file to a local `.env`
+(gitignored — never commit real secrets), fill in your values, and load it:
+
+```bash
+cp .env.example .env
+# edit .env, then:
+set -a && source .env && set +a
+```
+
 ## 1. Higgsfield key — without it nothing generates
 
 Set **one** of these credential forms:
